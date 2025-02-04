@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dialogflow-serviceaccount  # Vault Service Account for authentication
+  namespace: dialogflow-server-v2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dialogflow-server-v2
+  namespace: dialogflow-server-v2
+  labels:
+    app: dialogflow-server-v2
+spec:
+  selector:
+    matchLabels:
+      app: dialogflow-server-v2
+  template:
+    metadata:
+      annotations:
+        # Vault Agent Injection Annotations - START
+        vault.hashicorp.com/agent-inject: "true"  # Enable Vault Agent Injection
+        vault.hashicorp.com/role: "dialogflow-role"  # Role assigned for Vault access
+        vault.hashicorp.com/agent-inject-secret-dialogflow-secrets: "secret/data/dialogflow-secret"  # Path to Vault secret
+        vault.hashicorp.com/agent-inject-template-dialogflow-secrets: |
+          {{- with secret "secret/data/dialogflow-secret" -}}  # Fetch secret from Vault
+          {{ range $key, $value := .Data.data }}
+          export {{ $key | upper }}={{ $value }}  # Dynamically export secrets as environment variables
+          {{- end }}
+          {{- end }}
+        # Vault Agent Injection Annotations - END
+      labels:
+        app: dialogflow-server-v2
+    spec:
+      serviceAccountName: dialogflow-serviceaccount  # Service Account for Vault authentication
+      containers:
+        - name: dialogflow-server-v2
+          image: 304500054776.dkr.ecr.ap-south-1.amazonaws.com/dialogflow-server-v2:2
+          ports:
+            - containerPort: 5003
+          # Vault Secrets Environment Injection - START
+          envFrom:
+            - secretRef:
+                name: vault-secrets  # Reference to the injected Vault secrets
+          # Vault Secrets Environment Injection - END
+          resources:
+            requests:
+              memory: "450Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "350m"
+          livenessProbe:
+            httpGet:
+              path: /df/health-check
+              port: 5003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /df/health-check
+              port: 5003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dialogflow-server-v2
+  labels:
+    app: dialogflow-server-v2
+spec:
+  ports:
+  - port: 5003
+    targetPort: 5003
+    protocol: TCP
+    name: app
+  selector:
+    app: dialogflow-server-v2
+  type: ClusterIP
